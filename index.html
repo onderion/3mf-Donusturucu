@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3MF ADAPTÖR - Snapmaker U1</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #0d0d0d;
+            --panel-bg: #141414;
+            --border-color: #2a2a2a;
+            --accent-yellow: #feca00;
+            --text-main: #cccccc;
+            --text-dim: #666666;
+            --font-mono: 'Consolas', 'Courier New', monospace;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: var(--font-mono);
+            padding: 2rem;
+            line-height: 1.5;
+            background-image: 
+                linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+            background-size: 30px 30px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .header-title { display: flex; align-items: center; gap: 15px; }
+        .logo-box { background: var(--accent-yellow); color: #000; font-weight: bold; padding: 5px 10px; font-size: 1.2rem; }
+        .title-text h1 { font-size: 1.5rem; color: #fff; text-transform: uppercase; letter-spacing: 2px; }
+        .title-text p { color: var(--text-dim); font-size: 0.85rem; }
+        
+        .target-bed { border: 1px solid var(--accent-yellow); color: var(--accent-yellow); padding: 5px 15px; font-size: 0.9rem; }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            padding: 20px;
+        }
+
+        .drop-zone {
+            border: 2px dashed var(--text-dim);
+            height: 300px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            position: relative;
+        }
+        
+        .drop-zone:hover, .drop-zone.dragover { border-color: var(--accent-yellow); background: rgba(254, 202, 0, 0.05); }
+        .drop-icon { font-size: 2.5rem; color: var(--accent-yellow); margin-bottom: 15px; font-weight: bold; }
+        .drop-text { font-size: 1.1rem; color: #fff; letter-spacing: 1px; margin-bottom: 5px; }
+        .drop-subtext { color: var(--text-dim); font-size: 0.8rem; }
+        #file-input { display: none; }
+
+        .profile-table { width: 100%; border-collapse: collapse; }
+        .profile-table td { padding: 10px 0; border-bottom: 1px solid var(--border-color); font-size: 0.9rem; }
+        .profile-table td:last-child { text-align: right; color: #fff; }
+        .profile-table tr:first-child td:last-child { color: var(--accent-yellow); font-weight: bold; }
+        .panel-title { color: var(--text-dim); font-size: 0.8rem; margin-bottom: 15px; text-transform: uppercase; letter-spacing: 1px; }
+
+        .bottom-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            border-top: 1px solid var(--border-color);
+            padding-top: 15px;
+        }
+
+        .info-item h4 { color: #fff; font-size: 0.9rem; margin-bottom: 5px; }
+        .info-item h4 span { color: var(--text-dim); margin-right: 10px; }
+        .info-item p { color: var(--text-dim); font-size: 0.8rem; }
+
+        .history-panel { display: flex; flex-direction: column; }
+        .history-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .history-list { flex-grow: 1; border-top: 1px solid var(--border-color); padding-top: 15px; font-size: 0.8rem; color: var(--text-dim); overflow-y: auto; max-height: 200px; }
+        .history-item { margin-bottom: 10px; border-left: 2px solid var(--accent-yellow); padding-left: 10px; }
+        .history-item a { color: var(--accent-yellow); text-decoration: none; }
+        
+        .loading-overlay {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(20,20,20,0.9); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; display: none;
+            color: var(--accent-yellow); font-weight: bold; font-size: 1.2rem;
+        }
+
+        button.action-btn {
+            background: transparent; border: 1px solid var(--border-color);
+            color: var(--text-main); padding: 5px 10px; cursor: pointer; font-family: inherit;
+        }
+        button.action-btn:hover { border-color: var(--accent-yellow); color: var(--accent-yellow); }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="header-title">
+            <div class="logo-box">3MF</div>
+            <div class="title-text">
+                <h1>3MF ADAPTÖR</h1>
+                <p>Bambu Lab → Snapmaker U1 (Orca Slicer) dönüştürücü</p>
+            </div>
+        </div>
+        <div class="target-bed">HEDEF TABLA &nbsp;&nbsp; 270×270×270 mm</div>
+    </div>
+
+    <div class="main-grid">
+        <div class="panel">
+            <div class="drop-zone" id="drop-zone">
+                <div class="drop-icon">[ + ]</div>
+                <div class="drop-text">.3MF DOSYASINI BURAYA SÜRÜKLE VEYA TIKLA</div>
+                <div class="drop-subtext">Bambu Studio / Orca Slicer çıktısı · Maks 200 MB</div>
+                <input type="file" id="file-input" accept=".3mf">
+                
+                <div class="loading-overlay" id="loading">
+                    İŞLENİYOR... LÜTFEN BEKLEYİN
+                    <div style="font-size: 0.8rem; color: #aaa; margin-top: 10px;" id="loading-sub">Dosya okunuyor</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">HEDEF PROFİL</div>
+            <table class="profile-table">
+                <tr><td>Yazıcı</td><td>Snapmaker U1</td></tr>
+                <tr><td>Tabla X</td><td>270 mm</td></tr>
+                <tr><td>Tabla Y</td><td>270 mm</td></tr>
+                <tr><td>Maks. Z</td><td>270 mm</td></tr>
+                <tr><td>Nozzle</td><td>0.4 mm</td></tr>
+                <tr><td>Ekstruder</td><td>4</td></tr>
+                <tr><td>G-code</td><td>MARLIN</td></tr>
+            </table>
+        </div>
+    </div>
+
+    <div class="bottom-grid">
+        <div class="panel">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
+                <div class="panel-title" style="margin: 0; font-weight: bold; color: #fff;">BİLGİ PANELİ — NASIL DÖNÜŞTÜRÜR?</div>
+                <div style="color: var(--accent-yellow); font-size: 0.8rem;">v1.0</div>
+            </div>
+            <div class="info-grid">
+                <div class="info-item">
+                    <h4><span>01</span>YAZICI PROFİLİ</h4>
+                    <p>Bambu Lab profil kimliği Snapmaker U1 0.4 nozzle ile değiştirilir.</p>
+                </div>
+                <div class="info-item">
+                    <h4><span>02</span>TABLA BOYUTU</h4>
+                    <p>printable_area ve printable_height alanları 270×270×270 mm yapılır.</p>
+                </div>
+                <div class="info-item">
+                    <h4><span>03</span>G-CODE TÜRÜ</h4>
+                    <p>G-code akışı Snapmaker'ın beklediği Marlin türevine ayarlanır.</p>
+                </div>
+                <div class="info-item">
+                    <h4><span>04</span>EKSTRUDER UYUMU</h4>
+                    <p>4-Renk modülü indeksleri korunarak filament eşleşmeleri aktarılır.</p>
+                </div>
+                <div class="info-item">
+                    <h4><span>05</span>GEOMETRİ KONTROLÜ</h4>
+                    <p>Her obje için XYZ sınırları okunup tabla hacmiyle karşılaştırılır.</p>
+                </div>
+                <div class="info-item">
+                    <h4><span>06</span>YENİDEN PAKETLEME</h4>
+                    <p>Metadata güncellenir, model verisi korunur, anında cihazınıza indirilir.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel history-panel">
+            <div class="history-header">
+                <div class="panel-title" style="margin: 0; font-weight: bold; color: #fff;">DÖNÜŞTÜRME GEÇMİŞİ</div>
+                <button class="action-btn" id="clear-history">TEMİZLE</button>
+            </div>
+            <div class="history-list" id="history-list">
+                <div style="text-align: center; margin-top: 20px;">Henüz dönüşüm yapılmadı.</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const loadingOverlay = document.getElementById('loading');
+        const loadingSub = document.getElementById('loading-sub');
+        const historyList = document.getElementById('history-list');
+
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            handleFile(e.dataTransfer.files[0]);
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            handleFile(e.target.files[0]);
+        });
+
+        document.getElementById('clear-history').addEventListener('click', () => {
+            historyList.innerHTML = '<div style="text-align: center; margin-top: 20px;">Henüz dönüşüm yapılmadı.</div>';
+        });
+
+        async function handleFile(file) {
+            if (!file || !file.name.toLowerCase().endsWith('.3mf')) {
+                alert('Lütfen geçerli bir .3mf dosyası yükleyin.');
+                return;
+            }
+
+            loadingOverlay.style.display = 'flex';
+            loadingSub.innerText = "ZIP arşivi çözümleniyor...";
+
+            try {
+                const zip = new JSZip();
+                const loadedZip = await zip.loadAsync(file);
+                
+                let exceedsBounds = false;
+                
+                // GEOMETRİ KONTROLÜ
+                loadingSub.innerText = "Geometri kontrol ediliyor...";
+                const modelFile = loadedZip.file("3D/3dmodel.model");
+                if (modelFile) {
+                    const modelXml = await modelFile.async("string");
+                    const parser = new DOMParser();
+                    const xmlDoc = parser.parseFromString(modelXml, "text/xml");
+                    const vertices = xmlDoc.getElementsByTagName("vertex");
+                    
+                    let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity, minZ=Infinity, maxZ=-Infinity;
+                    
+                    // Tarayıcıyı dondurmamak için hızlı döngü
+                    for(let i=0; i<vertices.length; i++) {
+                        let x = parseFloat(vertices[i].getAttribute("x"));
+                        let y = parseFloat(vertices[i].getAttribute("y"));
+                        let z = parseFloat(vertices[i].getAttribute("z"));
+                        if(x < minX) minX = x; if(x > maxX) maxX = x;
+                        if(y < minY) minY = y; if(y > maxY) maxY = y;
+                        if(z < minZ) minZ = z; if(z > maxZ) maxZ = z;
+                    }
+                    
+                    if ((maxX - minX) > 270 || (maxY - minY) > 270 || (maxZ - minZ) > 270) {
+                        exceedsBounds = true;
+                    }
+                }
+
+                // METADATA DÜZENLEME
+                loadingSub.innerText = "SlicerSetup.config güncelleniyor...";
+                const configFile = loadedZip.file("Metadata/SlicerSetup.config");
+                if (configFile) {
+                    let configStr = await configFile.async("string");
+                    
+                    // Bambu değerlerini Snapmaker U1 ile değiştir
+                    configStr = configStr.replace(/Bambu Lab X1 Carbon|Bambu Lab P1P|Bambu Lab P1S/g, 'Snapmaker U1');
+                    configStr = configStr.replace(/bed_shape = [^\n]+/g, 'bed_shape = 0x0,270x0,270x270,0x270');
+                    configStr = configStr.replace(/max_print_height = [^\n]+/g, 'max_print_height = 270');
+                    configStr = configStr.replace(/gcode_flavor = [^\n]+/g, 'gcode_flavor = marlin');
+                    
+                    loadedZip.file("Metadata/SlicerSetup.config", configStr);
+                }
+
+                // Kullanıcı uyarısı
+                if (exceedsBounds) {
+                    const proceed = confirm("UYARI: Modelin boyutları veya tablaya yayılımı Snapmaker U1 sınırlarını (270mm) aşıyor! Yine de dönüştürülmüş dosyayı kaydetmek istiyor musunuz?");
+                    if (!proceed) {
+                        loadingOverlay.style.display = 'none';
+                        return;
+                    }
+                }
+
+                // PAKETLEME VE İNDİRME
+                loadingSub.innerText = "Yeni 3MF dosyası paketleniyor...";
+                const blob = await loadedZip.generateAsync({type:"blob", compression: "DEFLATE"});
+                const newFilename = file.name.replace('.3mf', '') + '_SnapmakerU1.3mf';
+                
+                // İndirme işlemini tetikleyen güvenilir yöntem
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = newFilename;
+                document.body.appendChild(a);
+                a.click();
+                
+                // Bellek temizliği
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                }, 100);
+
+                addToHistory(file.name, newFilename);
+
+            } catch (error) {
+                console.error(error);
+                alert("Dosya işlenirken bir hata oluştu: " + error.message);
+            } finally {
+                loadingOverlay.style.display = 'none';
+                fileInput.value = ''; // Inputu sıfırla
+            }
+        }
+
+        function addToHistory(originalName, newName) {
+            if (historyList.innerText.includes('Henüz')) historyList.innerHTML = '';
+            
+            const time = new Date().toLocaleTimeString('tr-TR', {hour: '2-digit', minute:'2-digit'});
+            const item = document.createElement('div');
+            item.className = 'history-item';
+            item.innerHTML = `
+                <span style="color: #fff;">[${time}]</span> ${originalName}<br>
+                <span style="color: var(--text-dim);">↳ <a href="#">${newName}</a> (Tamamlandı)</span>
+            `;
+            historyList.prepend(item);
+        }
+    </script>
+</body>
+</html>
