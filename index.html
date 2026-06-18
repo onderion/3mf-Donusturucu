@@ -255,16 +255,21 @@
                 
                 let exceedsBounds = false;
                 
-                // GEOMETRİ KONTROLÜ
-                loadingSub.innerText = "Geometri kontrol ediliyor...";
+                // GEOMETRİ KONTROLÜ VE OBJE İÇİ AYAR DÜZELTME
+                loadingSub.innerText = "Geometri ve model ayarları kontrol ediliyor...";
                 const modelFile = loadedZip.file("3D/3dmodel.model");
                 if (modelFile) {
-                    const modelXml = await modelFile.async("string");
+                    let modelXml = await modelFile.async("string"); // const yerine let yapalım ki değiştirebilelim
+                    
+                    // Obje içine gömülü hatalı Bambu parametrelerini düzelt
+                    modelXml = modelXml.replace(/key="raft_first_layer_expansion" value="-1"/g, 'key="raft_first_layer_expansion" value="0"');
+                    modelXml = modelXml.replace(/key="solid_infill_filament" value="0"/g, 'key="solid_infill_filament" value="1"');
+                    modelXml = modelXml.replace(/key="sparse_infill_filament" value="0"/g, 'key="sparse_infill_filament" value="1"');
+                    modelXml = modelXml.replace(/key="tree_support_wall_count" value="-1"/g, 'key="tree_support_wall_count" value="0"');
+                    modelXml = modelXml.replace(/key="wall_filament" value="0"/g, 'key="wall_filament" value="1"');
+
                     const parser = new DOMParser();
                     const xmlDoc = parser.parseFromString(modelXml, "text/xml");
-                    const vertices = xmlDoc.getElementsByTagName("vertex");
-                    
-                    let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity, minZ=Infinity, maxZ=-Infinity;
                     
                     // Tarayıcıyı dondurmamak için hızlı döngü
                     for(let i=0; i<vertices.length; i++) {
@@ -279,9 +284,9 @@
                     if ((maxX - minX) > 270 || (maxY - minY) > 270 || (maxZ - minZ) > 270) {
                         exceedsBounds = true;
                     }
+                    loadedZip.file("3D/3dmodel.model", modelXml);
                 }
 
-                // METADATA DÜZENLEME
                 // METADATA DÜZENLEME
                 loadingSub.innerText = "SlicerSetup.config güncelleniyor...";
                 const configFile = loadedZip.file("Metadata/SlicerSetup.config");
@@ -314,7 +319,32 @@
                     } else {
                         configStr += '\nbefore_layer_change_gcode = G92 E0\n';
                     }
-                  
+                    
+                    // 5. "Export G-Code" yerine "Yazdır" Butonunu Tetiklemek İçin Ağ Ayarı
+                    if (!configStr.includes('print_host =')) {
+                        configStr += '\nprint_host = 192.168.1.100\n'; // Sanal IP
+                    }
+                    if (configStr.includes('host_type =')) {
+                        configStr = configStr.replace(/host_type = [^\n]+/g, 'host_type = octoprint');
+                    } else {
+                        configStr += '\nhost_type = octoprint\n';
+                    }
+                      // ... (Önceki ağ ayarları kodları)
+                    if (configStr.includes('host_type =')) {
+                        configStr = configStr.replace(/host_type = [^\n]+/g, 'host_type = octoprint');
+                    } else {
+                        configStr += '\nhost_type = octoprint\n';
+                    }
+
+                    // 6. Uyumsuz Bambu "Auto" Parametrelerini Standart Değerlere Çevir
+                    // (Hata veren -1 ve 0 değerlerini Orca sınırları içine çeker)
+                    configStr = configStr.replace(/raft_first_layer_expansion\s*=\s*-1/g, 'raft_first_layer_expansion = 0');
+                    configStr = configStr.replace(/solid_infill_filament\s*=\s*0/g, 'solid_infill_filament = 1');
+                    configStr = configStr.replace(/sparse_infill_filament\s*=\s*0/g, 'sparse_infill_filament = 1');
+                    configStr = configStr.replace(/tree_support_wall_count\s*=\s*-1/g, 'tree_support_wall_count = 0');
+                    configStr = configStr.replace(/wall_filament\s*=\s*0/g, 'wall_filament = 1');
+
+                    // Güncellenmiş ayarları kaydet
                     loadedZip.file("Metadata/SlicerSetup.config", configStr);
                 }
 
