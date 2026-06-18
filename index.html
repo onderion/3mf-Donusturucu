@@ -282,17 +282,39 @@
                 }
 
                 // METADATA DÜZENLEME
+                // METADATA DÜZENLEME
                 loadingSub.innerText = "SlicerSetup.config güncelleniyor...";
                 const configFile = loadedZip.file("Metadata/SlicerSetup.config");
                 if (configFile) {
                     let configStr = await configFile.async("string");
                     
-                    // Bambu değerlerini Snapmaker U1 ile değiştir
+                    // 1. Yazıcı Modeli ve Makerworld Özel Profil Adını Zorla Değiştir
+                    configStr = configStr.replace(/printer_model = [^\n]+/g, 'printer_model = Snapmaker U1');
+                    configStr = configStr.replace(/printer_settings_id = [^\n]+/g, 'printer_settings_id = Snapmaker U1 0.4 nozzle');
+                    // Gözden kaçabilecek diğer Bambu referanslarını temizle
                     configStr = configStr.replace(/Bambu Lab X1 Carbon|Bambu Lab P1P|Bambu Lab P1S/g, 'Snapmaker U1');
+                    
+                    // 2. Tabla Boyutunu Ayarla
                     configStr = configStr.replace(/bed_shape = [^\n]+/g, 'bed_shape = 0x0,270x0,270x270,0x270');
                     configStr = configStr.replace(/max_print_height = [^\n]+/g, 'max_print_height = 270');
-                    configStr = configStr.replace(/gcode_flavor = [^\n]+/g, 'gcode_flavor = marlin');
                     
+                    // 3. Tablayı PEI Plate (Textured Plate) Yap
+                    if (configStr.includes('curr_bed_type =')) {
+                        configStr = configStr.replace(/curr_bed_type = [^\n]+/g, 'curr_bed_type = textured_plate');
+                    } else {
+                        configStr += '\ncurr_bed_type = textured_plate\n';
+                    }
+                    
+                    // 4. G-Code Flavor'ı Marlin yap ve Hata Çözücü G92 E0 Kodunu Ekle
+                    configStr = configStr.replace(/gcode_flavor = [^\n]+/g, 'gcode_flavor = marlin');
+                    if (configStr.includes('before_layer_change_gcode =')) {
+                        if (!configStr.includes('G92 E0')) {
+                            configStr = configStr.replace(/(before_layer_change_gcode = [^\n]*)/g, '$1\\nG92 E0');
+                        }
+                    } else {
+                        configStr += '\nbefore_layer_change_gcode = G92 E0\n';
+                    }
+                  
                     loadedZip.file("Metadata/SlicerSetup.config", configStr);
                 }
 
