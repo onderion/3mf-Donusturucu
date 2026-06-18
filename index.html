@@ -167,7 +167,7 @@
         <div class="panel">
             <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
                 <div class="panel-title" style="margin: 0; font-weight: bold; color: #fff;">BİLGİ PANELİ — NASIL DÖNÜŞTÜRÜR?</div>
-                <div style="color: var(--accent-yellow); font-size: 0.8rem;">v1.6</div>
+                <div style="color: var(--accent-yellow); font-size: 0.8rem;">v1.7</div>
             </div>
             <div class="info-grid">
                 <div class="info-item">
@@ -249,106 +249,52 @@
             loadingOverlay.style.display = 'flex';
             loadingSub.innerText = "ZIP arşivi çözümleniyor...";
             
-           try {
+          try {
                 const zip = new JSZip();
                 const loadedZip = await zip.loadAsync(file);
                 
                 let exceedsBounds = false;
                 
-                // --- AŞAMA 1: TÜM AYARLARI OKUMA VE HAFIZAYA ALMA ---
-                loadingSub.innerText = "Bambulab dosyasındaki tüm ayarlar okunuyor...";
-                
-                // Dinamik obje: Tüm key=value çiftlerini tutacak.
-                let preservedSettings = {};
+                // NİHAİ KESİN ÇÖZÜM DÜZELTİCİ FONKSİYON
+                // Bambu'nun 3 farklı kayıt formatındaki hatalı $-1$ ve 0 değerlerini temizler.
+                function fixBambuValues(text) {
+                    let fixed = text;
+                    // Format 1: Config (Örn: wall_filament = 0)
+                    fixed = fixed.replace(/raft_first_layer_expansion\s*=\s*-1/g, 'raft_first_layer_expansion = 0');
+                    fixed = fixed.replace(/tree_support_wall_count\s*=\s*-1/g, 'tree_support_wall_count = 0');
+                    fixed = fixed.replace(/solid_infill_filament\s*=\s*0/g, 'solid_infill_filament = 1');
+                    fixed = fixed.replace(/sparse_infill_filament\s*=\s*0/g, 'sparse_infill_filament = 1');
+                    fixed = fixed.replace(/wall_filament\s*=\s*0/g, 'wall_filament = 1');
 
-                // ZIP'in içindeki .config dosyalarını bul
-                const configFiles = Object.keys(loadedZip.files).filter(name => name.endsWith('.config'));
-                
-                // SlicerSetup.config'in en son okunmasını sağla (öncelik onda)
-                configFiles.sort((a, b) => {
-                    if (a === "Metadata/SlicerSetup.config") return 1;
-                    if (b === "Metadata/SlicerSetup.config") return -1;
-                    return 0;
-                });
-
-                // Tüm .config dosyalarını tara ve ayarları oku
-                for (let filename of configFiles) {
-                    let fileContent = await loadedZip.file(filename).async("string");
-                    const lines = fileContent.split('\n');
-                    
-                    for (let line of lines) {
-                        // Regex: "key = value" formatını yakalar (boşlukları ve yorumları temizler)
-                        let match = line.match(/^\s*([^=;]+)\s*=\s*([^;]+)\s*(;.*)?$/);
-                        if (match && match[1] && match[2]) {
-                            let key = match[1].trim();
-                            let value = match[2].trim();
-                            
-                            // Kritik makine tanımları hariç her şeyi sakla.
-                            // Bunları saklamıyoruz çünkü Aşama 2'de Snapmaker'a özgü olarak ezeceğiz.
-                            if (!['bed_shape', 'printer_model', 'printer_settings_id', 'gcode_flavor', 'host_type', 'print_host', 'curr_bed_type', 'max_print_height', 'before_layer_change_gcode'].includes(key)) {
-                                preservedSettings[key] = value;
-                            }
-                        }
-                    }
-                }
-
-                // Filament hatalarını saklanan ayarlar içinde hemen düzeltelim.
-                // -1 -> 0 düzeltmesi
-                if (preservedSettings['raft_first_layer_expansion'] === "-1") preservedSettings['raft_first_layer_expansion'] = "0";
-                if (preservedSettings['tree_support_wall_count'] === "-1") preservedSettings['tree_support_wall_count'] = "0";
-                // 0 -> 1 düzeltmesi
-                if (preservedSettings['solid_infill_filament'] === "0") preservedSettings['solid_infill_filament'] = "1";
-                if (preservedSettings['sparse_infill_filament'] === "0") preservedSettings['sparse_infill_filament'] = "1";
-                if (preservedSettings['wall_filament'] === "0") preservedSettings['wall_filament'] = "1";
-
-
-                // --- AŞAMA 2: TÜM DOSYALARI TARAYIP PROFİL VE BOYUT GÜNCELLEMESİ ---
-                loadingSub.innerText = "OrcaSlicer Snapmaker U1 dosyası oluşturuluyor...";
-
-                // XML ve Sıkıştırılmış format hataları için (çünkü preservedSettings'de sadece config formatını düzelttik)
-                function fixBambuValuesFormat2Format3(text) {
-                    let t = text;
                     // Format 2: XML Etiket (Örn: key="wall_filament" value="0")
-                    t = t.replace(/(key="raft_first_layer_expansion"\s+value=")-1"/g, '$10"');
-                    t = t.replace(/(key="tree_support_wall_count"\s+value=")-1"/g, '$10"');
-                    t = t.replace(/(key="solid_infill_filament"\s+value=")0"/g, '$11"');
-                    t = t.replace(/(key="sparse_infill_filament"\s+value=")0"/g, '$11"');
-                    t = t.replace(/(key="wall_filament"\s+value=")0"/g, '$11"');
+                    fixed = fixed.replace(/(key="raft_first_layer_expansion"\s+value=")-1"/g, '$10"');
+                    fixed = fixed.replace(/(key="tree_support_wall_count"\s+value=")-1"/g, '$10"');
+                    fixed = fixed.replace(/(key="solid_infill_filament"\s+value=")0"/g, '$11"');
+                    fixed = fixed.replace(/(key="sparse_infill_filament"\s+value=")0"/g, '$11"');
+                    fixed = fixed.replace(/(key="wall_filament"\s+value=")0"/g, '$11"');
 
                     // Format 3: Sıkıştırılmış Noktalı Virgül (Örn: wall_filament=0;) - nadiren config dışında kalır
-                    t = t.replace(/raft_first_layer_expansion=-1(?=[;]|\s|$)/g, 'raft_first_layer_expansion=0');
-                    t = t.replace(/tree_support_wall_count=-1(?=[;]|\s|$)/g, 'tree_support_wall_count=0');
-                    t = t.replace(/solid_infill_filament=0(?=[;]|\s|$)/g, 'solid_infill_filament=1');
-                    t = t.replace(/sparse_infill_filament=0(?=[;]|\s|$)/g, 'sparse_infill_filament=1');
-                    t = t.replace(/wall_filament=0(?=[;]|\s|$)/g, 'wall_filament=1');
-                    return t;
+                    fixed = fixed.replace(/raft_first_layer_expansion=-1(?=[;]|\s|$)/g, 'raft_first_layer_expansion=0');
+                    fixed = fixed.replace(/tree_support_wall_count=-1(?=[;]|\s|$)/g, 'tree_support_wall_count=0');
+                    fixed = fixed.replace(/solid_infill_filament=0(?=[;]|\s|$)/g, 'solid_infill_filament=1');
+                    fixed = fixed.replace(/sparse_infill_filament=0(?=[;]|\s|$)/g, 'sparse_infill_filament=1');
+                    fixed = fixed.replace(/wall_filament=0(?=[;]|\s|$)/g, 'wall_filament=1');
+                    return fixed;
                 }
 
+                // TÜM DOSYALARI TARAYIP %100 AYAR KORUMA DÖNGÜSÜ
+                loadingSub.innerText = "Tüm ayarlar noksansız korunuyor...";
+                
                 for (let filename of Object.keys(loadedZip.files)) {
+                    // Sadece ayar ve model dosyalarının içine bak
                     if (filename.endsWith('.config') || filename.endsWith('.model')) {
                         let fileContent = await loadedZip.file(filename).async("string");
                         
-                        // İnatçı hataları temizle
-                        let fixedContent = fixBambuValuesFormat2Format3(fileContent);
+                        // İnatçı hataları nerede olursa olsun düzelt ($-1$ -> 0, 0 -> 1)
+                        let fixedContent = fixBambuValues(fileContent);
                         
                         // Ana Makine Ayarları Dosyasıysa Profil Değişimlerini Yap
                         if (filename === "Metadata/SlicerSetup.config") {
-                            
-                            // **KRİTİK GÜNCELLEME: Orijinal Bambulab Ayarlarının Tamamını Uygula**
-                            // SlicerSetup.config içindeki her satırı tara, preservedSettings'te varsa değiştir.
-                            for (let key in preservedSettings) {
-                                let value = preservedSettings[key];
-                                // Regex: Çok satırlı modda satır başındaki key'i bulur.
-                                let regex = new RegExp(`^\\s*${key}\\s*=.*`, 'gm');
-                                if (fixedContent.match(regex)) {
-                                    fixedContent = fixedContent.replace(regex, `${key} = ${value}`);
-                                } else {
-                                    // Eğer ayar varsayılan profilde yoksa (pek olası değil), yeni satır ekle
-                                    fixedContent += `\n${key} = ${value}\n`;
-                                }
-                            }
-
-                            // --- SONRA SNAPMAKER MAKİNE AYARLARINI UYGULA (NİHAİ SÖZ) ---
                             // Makine Modeli ve Profil Adı
                             fixedContent = fixedContent.replace(/^printer_model\s*=\s*[^\n]+/gm, 'printer_model = Snapmaker U1');
                             fixedContent = fixedContent.replace(/^printer_settings_id\s*=\s*[^\n]+/gm, 'printer_settings_id = Snapmaker U1 0.4 nozzle');
@@ -358,35 +304,39 @@
                             fixedContent = fixedContent.replace(/^bed_shape\s*=\s*[^\n]+/gm, 'bed_shape = 0x0,270x0,270x270,0x270');
                             fixedContent = fixedContent.replace(/^max_print_height\s*=\s*[^\n]+/gm, 'max_print_height = 270');
                             
-                            // Pütürlü PEI Tabla
-                            if (fixedContent.match(/^curr_bed_type\s*=.*$/m)) {
-                                fixedContent = fixedContent.replace(/^curr_bed_type\s*=\s*[^\n]+/gm, 'curr_bed_type = textured_plate');
-                            } else {
-                                fixedContent += '\ncurr_bed_type = textured_plate\n';
-                            }
-                            
-                            // G-Code Flavor ve Sıfırlama Kodu (G92 E0)
+                            // G-Code Flavor
                             fixedContent = fixedContent.replace(/^gcode_flavor\s*=\s*[^\n]+/gm, 'gcode_flavor = marlin');
-                            if (fixedContent.match(/^before_layer_change_gcode\s*=.*$/m)) {
-                                if (!fixedContent.includes('G92 E0')) {
-                                    fixedContent = fixedContent.replace(/^(before_layer_change_gcode\s*=\s*([^\n]*))/gm, '$1\\nG92 E0');
+
+                            // G92 E0 Ekleme (Hata Çözümü)
+                            let layerChangeRegex = /^before_layer_change_gcode\s*=\s*(.*)$/gm;
+                            let layerChangeMatch = fixedContent.match(layerChangeRegex);
+                            if (layerChangeMatch && layerChangeMatch[0]) {
+                                if (!layerChangeMatch[0].includes('G92 E0')) {
+                                    fixedContent = fixedContent.replace(layerChangeRegex, '$0\\nG92 E0');
                                 }
                             } else {
                                 fixedContent += '\nbefore_layer_change_gcode = G92 E0\n';
+                            }
+
+                            // PEI Tabla
+                            if (fixedContent.match(/^curr_bed_type\s*=\s*.*$/m)) {
+                                fixedContent = fixedContent.replace(/^curr_bed_type\s*=\s*[^\n]+/gm, 'curr_bed_type = textured_plate');
+                            } else {
+                                fixedContent += '\ncurr_bed_type = textured_plate\n';
                             }
 
                             // Yazdır Butonu Ağı
                             if (!fixedContent.includes('print_host =')) {
                                 fixedContent += '\nprint_host = 192.168.1.100\n';
                             }
-                            if (fixedContent.includes('host_type =')) {
+                            if (fixedContent.match(/^host_type\s*=\s*.*$/m)) {
                                 fixedContent = fixedContent.replace(/^host_type\s*=\s*[^\n]+/gm, 'host_type = octoprint');
                             } else {
                                 fixedContent += '\nhost_type = octoprint\n';
                             }
                         }
                         
-                        // 3B Model Dosyasıysa Boyut Kontrolü Yap
+                        // 3B Model Dosyasıysa Boyut (Geometri) Kontrolü Yap
                         if (filename === "3D/3dmodel.model") {
                             try {
                                 const parser = new DOMParser();
@@ -413,6 +363,44 @@
                         // Değişiklikleri dosyaya geri kaydet
                         loadedZip.file(filename, fixedContent);
                     }
+                }
+
+                // 2. KULLANICI UYARISI
+                if (exceedsBounds) {
+                    const proceed = confirm("UYARI: Modelin boyutları veya tablaya yayılımı Snapmaker U1 sınırlarını (270mm) aşıyor! Yine de dönüştürülmüş dosyayı kaydetmek istiyor musunuz?");
+                    if (!proceed) {
+                        loadingOverlay.style.display = 'none';
+                        return;
+                    }
+                }
+
+                // 3. YENİDEN PAKETLEME VE İNDİRME
+                loadingSub.innerText = "Yeni 3MF dosyası paketleniyor...";
+                const blob = await loadedZip.generateAsync({type:"blob", compression: "DEFLATE"});
+                const newFilename = file.name.replace('.3mf', '') + '_SnapmakerU1.3mf';
+                
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = newFilename;
+                document.body.appendChild(a);
+                a.click();
+                
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                }, 100);
+
+                addToHistory(file.name, newFilename);
+
+            } catch (error) {
+                console.error(error);
+                alert("Dosya işlenirken bir hata oluştu: " + error.message);
+            } finally {
+                loadingOverlay.style.display = 'none';
+                fileInput.value = '';
+            }
                 }
 
                 // --- AŞAMA 3: KULLANICI UYARISI, PAKETLEME VE İNDİRME ---
