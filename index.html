@@ -167,7 +167,7 @@
         <div class="panel">
             <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
                 <div class="panel-title" style="margin: 0; font-weight: bold; color: #fff;">BİLGİ PANELİ — NASIL DÖNÜŞTÜRÜR?</div>
-                <div style="color: var(--accent-yellow); font-size: 0.8rem;">v1.4</div>
+                <div style="color: var(--accent-yellow); font-size: 0.8rem;">v1.5</div>
             </div>
             <div class="info-grid">
                 <div class="info-item">
@@ -255,103 +255,91 @@
                 
                 let exceedsBounds = false;
                 
-                // EVRENSEL DÜZELTİCİ FONKSİYON
-                // Bambu'nun gizli, sıkıştırılmış veya ayrı yazılmış tüm hatalı değerlerini yakalar
+                // NİHAİ EVRENSEL DÜZELTİCİ FONKSİYON (Tüm varyasyonları yakalar)
                 function fixBambuValues(text) {
                     let fixed = text;
-                    // -1 değerlerini 0'a çek
-                    fixed = fixed.replace(/raft_first_layer_expansion([=\s"']+)-1/g, 'raft_first_layer_expansion$10');
-                    fixed = fixed.replace(/tree_support_wall_count([=\s"']+)-1/g, 'tree_support_wall_count$10');
+                    // Aradaki boşluk, eşittir, 'value="' gibi ifadeleri koruyarak -1'leri 0 yapar
+                    fixed = fixed.replace(/(raft_first_layer_expansion[^0-9-]{1,30})-1/g, '$10');
+                    fixed = fixed.replace(/(tree_support_wall_count[^0-9-]{1,30})-1/g, '$10');
                     
-                    // 0 değerlerini 1'e çek
-                    fixed = fixed.replace(/solid_infill_filament([=\s"']+)0/g, 'solid_infill_filament$11');
-                    fixed = fixed.replace(/sparse_infill_filament([=\s"']+)0/g, 'sparse_infill_filament$11');
-                    fixed = fixed.replace(/wall_filament([=\s"']+)0/g, 'wall_filament$11');
+                    // 0'ları 1 yapar (yanlışlıkla 0.5 veya 10 gibi sayıları bozmamak için kısıtlamalı)
+                    fixed = fixed.replace(/(solid_infill_filament[^0-9-]{1,30})0(?!\d|\.)/g, '$11');
+                    fixed = fixed.replace(/(sparse_infill_filament[^0-9-]{1,30})0(?!\d|\.)/g, '$11');
+                    fixed = fixed.replace(/(wall_filament[^0-9-]{1,30})0(?!\d|\.)/g, '$11');
                     return fixed;
                 }
 
-                // 1. GEOMETRİ KONTROLÜ VE OBJE İÇİ AYAR DÜZELTME
-                loadingSub.innerText = "Geometri ve model ayarları kontrol ediliyor...";
-                const modelFile = loadedZip.file("3D/3dmodel.model");
-                if (modelFile) {
-                    let modelXml = await modelFile.async("string");
-                    
-                    // Obje içindeki inatçı Bambu değerlerini evrensel fonksiyonla temizle
-                    modelXml = fixBambuValues(modelXml);
+                // 1. TÜM DOSYALARI TARAYIP TEMİZLEME DÖNGÜSÜ (KÖKTEN ÇÖZÜM)
+                loadingSub.innerText = "Tüm ayar dosyaları taranıyor ve temizleniyor...";
+                
+                for (let filename of Object.keys(loadedZip.files)) {
+                    // Sadece ayar ve model dosyalarının içine bak
+                    if (filename.endsWith('.config') || filename.endsWith('.model')) {
+                        let fileContent = await loadedZip.file(filename).async("string");
+                        
+                        // İnatçı hataları nerede olursa olsun düzelt
+                        let fixedContent = fixBambuValues(fileContent);
+                        
+                        // Ana Makine Ayarları Dosyasıysa Profil Değişimlerini Yap
+                        if (filename === "Metadata/SlicerSetup.config") {
+                            fixedContent = fixedContent.replace(/printer_model = [^\n]+/g, 'printer_model = Snapmaker U1');
+                            fixedContent = fixedContent.replace(/printer_settings_id = [^\n]+/g, 'printer_settings_id = Snapmaker U1 0.4 nozzle');
+                            fixedContent = fixedContent.replace(/Bambu Lab X1 Carbon|Bambu Lab P1P|Bambu Lab P1S|Bambu Lab A1/g, 'Snapmaker U1');
+                            
+                            fixedContent = fixedContent.replace(/bed_shape = [^\n]+/g, 'bed_shape = 0x0,270x0,270x270,0x270');
+                            fixedContent = fixedContent.replace(/max_print_height = [^\n]+/g, 'max_print_height = 270');
+                            
+                            if (fixedContent.includes('curr_bed_type =')) {
+                                fixedContent = fixedContent.replace(/curr_bed_type = [^\n]+/g, 'curr_bed_type = textured_plate');
+                            } else {
+                                fixedContent += '\ncurr_bed_type = textured_plate\n';
+                            }
+                            
+                            fixedContent = fixedContent.replace(/gcode_flavor = [^\n]+/g, 'gcode_flavor = marlin');
+                            if (fixedContent.includes('before_layer_change_gcode =')) {
+                                if (!fixedContent.includes('G92 E0')) {
+                                    fixedContent = fixedContent.replace(/(before_layer_change_gcode = [^\n]*)/g, '$1\\nG92 E0');
+                                }
+                            } else {
+                                fixedContent += '\nbefore_layer_change_gcode = G92 E0\n';
+                            }
 
-                    const parser = new DOMParser();
-                    const xmlDoc = parser.parseFromString(modelXml, "text/xml");
-                    const vertices = xmlDoc.getElementsByTagName("vertex");
-                    
-                    let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity, minZ=Infinity, maxZ=-Infinity;
-                    
-                    // Tarayıcıyı dondurmamak için hızlı döngü
-                    for(let i=0; i<vertices.length; i++) {
-                        let x = parseFloat(vertices[i].getAttribute("x"));
-                        let y = parseFloat(vertices[i].getAttribute("y"));
-                        let z = parseFloat(vertices[i].getAttribute("z"));
-                        if(x < minX) minX = x; if(x > maxX) maxX = x;
-                        if(y < minY) minY = y; if(y > maxY) maxY = y;
-                        if(z < minZ) minZ = z; if(z > maxZ) maxZ = z;
-                    }
-                    
-                    if ((maxX - minX) > 270 || (maxY - minY) > 270 || (maxZ - minZ) > 270) {
-                        exceedsBounds = true;
-                    }
-                    
-                    // Düzeltilmiş modeli geri kaydet
-                    loadedZip.file("3D/3dmodel.model", modelXml);
-                }
-
-                // 2. METADATA DÜZENLEME
-                loadingSub.innerText = "SlicerSetup.config güncelleniyor...";
-                const configFile = loadedZip.file("Metadata/SlicerSetup.config");
-                if (configFile) {
-                    let configStr = await configFile.async("string");
-                    
-                    // Ayar dosyasındaki inatçı Bambu değerlerini evrensel fonksiyonla temizle
-                    configStr = fixBambuValues(configStr);
-                    
-                    // Yazıcı Modeli ve Makerworld Adı Temizliği
-                    configStr = configStr.replace(/printer_model = [^\n]+/g, 'printer_model = Snapmaker U1');
-                    configStr = configStr.replace(/printer_settings_id = [^\n]+/g, 'printer_settings_id = Snapmaker U1 0.4 nozzle');
-                    configStr = configStr.replace(/Bambu Lab X1 Carbon|Bambu Lab P1P|Bambu Lab P1S/g, 'Snapmaker U1');
-                    
-                    // Tabla Boyutları
-                    configStr = configStr.replace(/bed_shape = [^\n]+/g, 'bed_shape = 0x0,270x0,270x270,0x270');
-                    configStr = configStr.replace(/max_print_height = [^\n]+/g, 'max_print_height = 270');
-                    
-                    // PEI Plate
-                    if (configStr.includes('curr_bed_type =')) {
-                        configStr = configStr.replace(/curr_bed_type = [^\n]+/g, 'curr_bed_type = textured_plate');
-                    } else {
-                        configStr += '\ncurr_bed_type = textured_plate\n';
-                    }
-                    
-                    // G-Code ve G92 E0 Düzeltmesi
-                    configStr = configStr.replace(/gcode_flavor = [^\n]+/g, 'gcode_flavor = marlin');
-                    if (configStr.includes('before_layer_change_gcode =')) {
-                        if (!configStr.includes('G92 E0')) {
-                            configStr = configStr.replace(/(before_layer_change_gcode = [^\n]*)/g, '$1\\nG92 E0');
+                            if (!fixedContent.includes('print_host =')) {
+                                fixedContent += '\nprint_host = 192.168.1.100\n';
+                            }
+                            if (fixedContent.includes('host_type =')) {
+                                fixedContent = fixedContent.replace(/host_type = [^\n]+/g, 'host_type = octoprint');
+                            } else {
+                                fixedContent += '\nhost_type = octoprint\n';
+                            }
                         }
-                    } else {
-                        configStr += '\nbefore_layer_change_gcode = G92 E0\n';
+                        
+                        // 3B Model Dosyasıysa Boyut (Geometri) Kontrolü Yap
+                        if (filename === "3D/3dmodel.model") {
+                            const parser = new DOMParser();
+                            const xmlDoc = parser.parseFromString(fixedContent, "text/xml");
+                            const vertices = xmlDoc.getElementsByTagName("vertex");
+                            let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity, minZ=Infinity, maxZ=-Infinity;
+                            
+                            for(let i=0; i<vertices.length; i++) {
+                                let x = parseFloat(vertices[i].getAttribute("x"));
+                                let y = parseFloat(vertices[i].getAttribute("y"));
+                                let z = parseFloat(vertices[i].getAttribute("z"));
+                                if(x < minX) minX = x; if(x > maxX) maxX = x;
+                                if(y < minY) minY = y; if(y > maxY) maxY = y;
+                                if(z < minZ) minZ = z; if(z > maxZ) maxZ = z;
+                            }
+                            if ((maxX - minX) > 270 || (maxY - minY) > 270 || (maxZ - minZ) > 270) {
+                                exceedsBounds = true;
+                            }
+                        }
+                        
+                        // Değişiklikleri dosyaya geri kaydet
+                        loadedZip.file(filename, fixedContent);
                     }
-
-                    // Print (Yazdır) Butonunu Aktifleştirme Ağı
-                    if (!configStr.includes('print_host =')) {
-                        configStr += '\nprint_host = 192.168.1.100\n';
-                    }
-                    if (configStr.includes('host_type =')) {
-                        configStr = configStr.replace(/host_type = [^\n]+/g, 'host_type = octoprint');
-                    } else {
-                        configStr += '\nhost_type = octoprint\n';
-                    }
-                    
-                    loadedZip.file("Metadata/SlicerSetup.config", configStr);
                 }
 
-                // Kullanıcı uyarısı
+                // 2. KULLANICI UYARISI
                 if (exceedsBounds) {
                     const proceed = confirm("UYARI: Modelin boyutları veya tablaya yayılımı Snapmaker U1 sınırlarını (270mm) aşıyor! Yine de dönüştürülmüş dosyayı kaydetmek istiyor musunuz?");
                     if (!proceed) {
@@ -360,7 +348,7 @@
                     }
                 }
 
-                // PAKETLEME VE İNDİRME
+                // 3. YENİDEN PAKETLEME VE İNDİRME
                 loadingSub.innerText = "Yeni 3MF dosyası paketleniyor...";
                 const blob = await loadedZip.generateAsync({type:"blob", compression: "DEFLATE"});
                 const newFilename = file.name.replace('.3mf', '') + '_SnapmakerU1.3mf';
