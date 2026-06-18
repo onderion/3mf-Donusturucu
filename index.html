@@ -167,7 +167,7 @@
         <div class="panel">
             <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
                 <div class="panel-title" style="margin: 0; font-weight: bold; color: #fff;">BİLGİ PANELİ — NASIL DÖNÜŞTÜRÜR?</div>
-                <div style="color: var(--accent-yellow); font-size: 0.8rem;">v1.3</div>
+                <div style="color: var(--accent-yellow); font-size: 0.8rem;">v1.4</div>
             </div>
             <div class="info-grid">
                 <div class="info-item">
@@ -248,30 +248,40 @@
 
             loadingOverlay.style.display = 'flex';
             loadingSub.innerText = "ZIP arşivi çözümleniyor...";
-
+            
             try {
                 const zip = new JSZip();
                 const loadedZip = await zip.loadAsync(file);
                 
                 let exceedsBounds = false;
                 
-                // GEOMETRİ KONTROLÜ VE OBJE İÇİ AYAR DÜZELTME
+                // EVRENSEL DÜZELTİCİ FONKSİYON
+                // Bambu'nun gizli, sıkıştırılmış veya ayrı yazılmış tüm hatalı değerlerini yakalar
+                function fixBambuValues(text) {
+                    let fixed = text;
+                    // -1 değerlerini 0'a çek
+                    fixed = fixed.replace(/raft_first_layer_expansion([=\s"']+)-1/g, 'raft_first_layer_expansion$10');
+                    fixed = fixed.replace(/tree_support_wall_count([=\s"']+)-1/g, 'tree_support_wall_count$10');
+                    
+                    // 0 değerlerini 1'e çek
+                    fixed = fixed.replace(/solid_infill_filament([=\s"']+)0/g, 'solid_infill_filament$11');
+                    fixed = fixed.replace(/sparse_infill_filament([=\s"']+)0/g, 'sparse_infill_filament$11');
+                    fixed = fixed.replace(/wall_filament([=\s"']+)0/g, 'wall_filament$11');
+                    return fixed;
+                }
+
+                // 1. GEOMETRİ KONTROLÜ VE OBJE İÇİ AYAR DÜZELTME
                 loadingSub.innerText = "Geometri ve model ayarları kontrol ediliyor...";
                 const modelFile = loadedZip.file("3D/3dmodel.model");
                 if (modelFile) {
                     let modelXml = await modelFile.async("string");
                     
-                    // 1. Obje içine gömülü hatalı Bambu parametrelerini düzelt
-                    modelXml = modelXml.replace(/key="raft_first_layer_expansion" value="-1"/g, 'key="raft_first_layer_expansion" value="0"');
-                    modelXml = modelXml.replace(/key="solid_infill_filament" value="0"/g, 'key="solid_infill_filament" value="1"');
-                    modelXml = modelXml.replace(/key="sparse_infill_filament" value="0"/g, 'key="sparse_infill_filament" value="1"');
-                    modelXml = modelXml.replace(/key="tree_support_wall_count" value="-1"/g, 'key="tree_support_wall_count" value="0"');
-                    modelXml = modelXml.replace(/key="wall_filament" value="0"/g, 'key="wall_filament" value="1"');
+                    // Obje içindeki inatçı Bambu değerlerini evrensel fonksiyonla temizle
+                    modelXml = fixBambuValues(modelXml);
 
-                    // 2. Geometri (Boyut) Kontrolü
                     const parser = new DOMParser();
                     const xmlDoc = parser.parseFromString(modelXml, "text/xml");
-                    const vertices = xmlDoc.getElementsByTagName("vertex"); // KAYBOLAN SATIR EKLENDİ
+                    const vertices = xmlDoc.getElementsByTagName("vertex");
                     
                     let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity, minZ=Infinity, maxZ=-Infinity;
                     
@@ -285,7 +295,6 @@
                         if(z < minZ) minZ = z; if(z > maxZ) maxZ = z;
                     }
                     
-                    // Tabla dışına taşıyor mu kontrolü
                     if ((maxX - minX) > 270 || (maxY - minY) > 270 || (maxZ - minZ) > 270) {
                         exceedsBounds = true;
                     }
@@ -294,30 +303,32 @@
                     loadedZip.file("3D/3dmodel.model", modelXml);
                 }
 
-                // METADATA DÜZENLEME
+                // 2. METADATA DÜZENLEME
                 loadingSub.innerText = "SlicerSetup.config güncelleniyor...";
                 const configFile = loadedZip.file("Metadata/SlicerSetup.config");
                 if (configFile) {
                     let configStr = await configFile.async("string");
                     
-                    // 1. Yazıcı Modeli ve Makerworld Özel Profil Adını Zorla Değiştir
+                    // Ayar dosyasındaki inatçı Bambu değerlerini evrensel fonksiyonla temizle
+                    configStr = fixBambuValues(configStr);
+                    
+                    // Yazıcı Modeli ve Makerworld Adı Temizliği
                     configStr = configStr.replace(/printer_model = [^\n]+/g, 'printer_model = Snapmaker U1');
                     configStr = configStr.replace(/printer_settings_id = [^\n]+/g, 'printer_settings_id = Snapmaker U1 0.4 nozzle');
-                    // Gözden kaçabilecek diğer Bambu referanslarını temizle
                     configStr = configStr.replace(/Bambu Lab X1 Carbon|Bambu Lab P1P|Bambu Lab P1S/g, 'Snapmaker U1');
                     
-                    // 2. Tabla Boyutunu Ayarla
+                    // Tabla Boyutları
                     configStr = configStr.replace(/bed_shape = [^\n]+/g, 'bed_shape = 0x0,270x0,270x270,0x270');
                     configStr = configStr.replace(/max_print_height = [^\n]+/g, 'max_print_height = 270');
                     
-                    // 3. Tablayı PEI Plate (Textured Plate) Yap
+                    // PEI Plate
                     if (configStr.includes('curr_bed_type =')) {
                         configStr = configStr.replace(/curr_bed_type = [^\n]+/g, 'curr_bed_type = textured_plate');
                     } else {
                         configStr += '\ncurr_bed_type = textured_plate\n';
                     }
                     
-                    // 4. G-Code Flavor'ı Marlin yap ve Hata Çözücü G92 E0 Kodunu Ekle
+                    // G-Code ve G92 E0 Düzeltmesi
                     configStr = configStr.replace(/gcode_flavor = [^\n]+/g, 'gcode_flavor = marlin');
                     if (configStr.includes('before_layer_change_gcode =')) {
                         if (!configStr.includes('G92 E0')) {
@@ -326,32 +337,17 @@
                     } else {
                         configStr += '\nbefore_layer_change_gcode = G92 E0\n';
                     }
-                    
-                    // 5. "Export G-Code" yerine "Yazdır" Butonunu Tetiklemek İçin Ağ Ayarı
+
+                    // Print (Yazdır) Butonunu Aktifleştirme Ağı
                     if (!configStr.includes('print_host =')) {
-                        configStr += '\nprint_host = 192.168.1.100\n'; // Sanal IP
+                        configStr += '\nprint_host = 192.168.1.100\n';
                     }
                     if (configStr.includes('host_type =')) {
                         configStr = configStr.replace(/host_type = [^\n]+/g, 'host_type = octoprint');
                     } else {
                         configStr += '\nhost_type = octoprint\n';
                     }
-                      // ... (Önceki ağ ayarları kodları)
-                    if (configStr.includes('host_type =')) {
-                        configStr = configStr.replace(/host_type = [^\n]+/g, 'host_type = octoprint');
-                    } else {
-                        configStr += '\nhost_type = octoprint\n';
-                    }
-
-                    // 6. Uyumsuz Bambu "Auto" Parametrelerini Standart Değerlere Çevir
-                    // (Hata veren -1 ve 0 değerlerini Orca sınırları içine çeker)
-                    configStr = configStr.replace(/raft_first_layer_expansion\s*=\s*-1/g, 'raft_first_layer_expansion = 0');
-                    configStr = configStr.replace(/solid_infill_filament\s*=\s*0/g, 'solid_infill_filament = 1');
-                    configStr = configStr.replace(/sparse_infill_filament\s*=\s*0/g, 'sparse_infill_filament = 1');
-                    configStr = configStr.replace(/tree_support_wall_count\s*=\s*-1/g, 'tree_support_wall_count = 0');
-                    configStr = configStr.replace(/wall_filament\s*=\s*0/g, 'wall_filament = 1');
-
-                    // Güncellenmiş ayarları kaydet
+                    
                     loadedZip.file("Metadata/SlicerSetup.config", configStr);
                 }
 
@@ -369,7 +365,6 @@
                 const blob = await loadedZip.generateAsync({type:"blob", compression: "DEFLATE"});
                 const newFilename = file.name.replace('.3mf', '') + '_SnapmakerU1.3mf';
                 
-                // İndirme işlemini tetikleyen güvenilir yöntem
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.style.display = 'none';
@@ -378,7 +373,6 @@
                 document.body.appendChild(a);
                 a.click();
                 
-                // Bellek temizliği
                 setTimeout(() => {
                     document.body.removeChild(a);
                     window.URL.revokeObjectURL(url);
@@ -391,7 +385,7 @@
                 alert("Dosya işlenirken bir hata oluştu: " + error.message);
             } finally {
                 loadingOverlay.style.display = 'none';
-                fileInput.value = ''; // Inputu sıfırla
+                fileInput.value = '';
             }
         }
 
